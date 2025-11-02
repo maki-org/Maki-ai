@@ -1,14 +1,27 @@
 import { useEffect, useState } from "react";
-import { Checkbox } from "@/components/ui/checkbox";
-import { apiService, Task } from "@/services/api";
-import { format, parseISO } from "date-fns";
+import { createAPIService, Task } from "@/services/api";
 import { useDataRefresh } from "@/contexts/DataRefreshContext";
+import { useAuth } from "@clerk/clerk-react";
+import {
+  format,
+  isToday,
+  parseISO,
+  isPast,
+  isFuture,
+  isYesterday,
+} from "date-fns";
+import { useNavigate } from "react-router-dom";
 
 const TasksList = () => {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [completingTaskId, setCompletingTaskId] = useState<string | null>(null);
   const { refreshTrigger } = useDataRefresh();
+  const { getToken } = useAuth();
+
+  const apiService = createAPIService(getToken);
+  const navigate = useNavigate();
 
   useEffect(() => {
     fetchTasks();
@@ -18,13 +31,39 @@ const TasksList = () => {
     try {
       setLoading(true);
       const data = await apiService.getTasks();
-      const taskItems = data.filter(
-        (item) => item.category === 'task' || item.category === 'deadline'
-      );
-      setTasks(taskItems.slice(0, 3));
+
+      const todayTasks = data.filter((item) => {
+        if (item.completed) return false;
+
+        if (!item.dueDate) {
+          // If no date, only include if text explicitly says "today"
+          const text = item.dueDateText?.toLowerCase() || "";
+          return text.includes("today") && !text.includes("yesterday");
+        }
+
+        try {
+          const taskDate = parseISO(item.dueDate);
+
+          return isToday(taskDate);
+        } catch {
+          return false;
+        }
+      });
+
+      // Sort by priority
+      const sorted = todayTasks.sort((a, b) => {
+        const priorityOrder = { high: 3, medium: 2, normal: 1, low: 1 };
+        const aPriority =
+          priorityOrder[a.priority as keyof typeof priorityOrder] || 0;
+        const bPriority =
+          priorityOrder[b.priority as keyof typeof priorityOrder] || 0;
+        return bPriority - aPriority;
+      });
+
+      setTasks(sorted.slice(0, 3));
       setError(null);
     } catch (err) {
-      setError('Failed to load tasks');
+      setError("Failed to load tasks");
       console.error(err);
     } finally {
       setLoading(false);
@@ -33,39 +72,67 @@ const TasksList = () => {
 
   const handleToggleTask = async (taskId: string, currentStatus: boolean) => {
     try {
+      setCompletingTaskId(taskId);
+
+      // Update on backend
       await apiService.updateTaskStatus(taskId, !currentStatus);
-      setTasks(tasks.map(task => 
-        task._id === taskId ? { ...task, completed: !currentStatus } : task
-      ));
+
+      setTimeout(() => {
+        setTasks((prevTasks) =>
+          prevTasks.filter((task) => task._id !== taskId)
+        );
+        setCompletingTaskId(null);
+      }, 1000);
     } catch (err) {
-      console.error('Failed to update task:', err);
+      console.error("Failed to update task:", err);
+      setCompletingTaskId(null);
+      fetchTasks();
     }
   };
 
-  const formatDueDate = (dateString: string | null): string => {
-    if (!dateString) return 'No due date';
-    
+  const formatDate = (dateString: string | null | undefined) => {
+    if (!dateString) return "No due date";
+
     try {
       const date = parseISO(dateString);
-      return format(date, 'MMM d \'at\' h:mm a');
-    } catch (e) {
-      console.error('Error parsing date:', e);
-      return 'Invalid date';
+      // Returns format like "Oct 28, 2025 at 8:30 AM"
+      return format(date, "MMM dd, yyyy 'at' h:mm a");
+    } catch {
+      return "No due date";
     }
   };
 
-  // UPDATED: Format speaker source
   const formatTaskSource = (from: string | null): string => {
-    if (!from) return 'Unknown';
-    
-    // Check if it's a speaker format (SPEAKER 1, SPEAKER 2, etc.)
-    if (from.toUpperCase().startsWith('SPEAKER')) {
-      const speakerNumber = from.split(' ')[1];
-      return `Conversation with Speaker ${speakerNumber}`;
+    if (!from) return "Unknown";
+
+    if (from.toUpperCase().startsWith("SPEAKER")) {
+      const speakerNumber = from.split(" ")[1];
+      return `Speaker ${speakerNumber}`;
     }
-    
-    // Otherwise, it's a custom name
-    return `Conversation with ${from}`;
+
+    return from;
+  };
+
+  const getCategoryLabel = (category: string) => {
+    const labels: Record<string, string> = {
+      work: "Work",
+      personal: "Personal",
+      followup: "Follow-up",
+      deadline: "Deadline",
+      general: "Task",
+    };
+    return labels[category] || "Task";
+  };
+
+  const getCategoryColor = (category: string) => {
+    const colors: Record<string, string> = {
+      work: "bg-blue-500/10 text-blue-600",
+      personal: "bg-purple-500/10 text-purple-600",
+      followup: "bg-green-500/10 text-green-600",
+      deadline: "bg-red-500/10 text-red-600",
+      general: "bg-gray-500/10 text-gray-600",
+    };
+    return colors[category] || "bg-gray-500/10 text-gray-600";
   };
 
   if (loading) {
@@ -96,53 +163,104 @@ const TasksList = () => {
     <div className="glass-container p-2">
       <div className="glass-card p-4 md:p-6">
         <div className="flex items-center justify-between mb-4 md:mb-6">
-          <h3 className="text-lg md:text-xl font-medium text-foreground border-b-2 border-gray-100/10 pb-1">Today's Tasks</h3>
-          <button className="text-xs md:text-sm hover:text-foreground transition-colors">
+          <h3 className="text-lg md:text-xl font-medium text-foreground border-b-2 border-gray-100/10 pb-1">
+            Today's Tasks
+          </h3>
+          <button
+            onClick={() => navigate("/activities")}
+            className=" text-xs md:text-sm hover:text-foreground transition-colors"
+          >
             View all
           </button>
         </div>
 
         {tasks.length === 0 ? (
-          <div className="text-center py-8">
-            <p className="text-sm text-muted-foreground">No tasks for today</p>
+          <div className="flex items-center justify-center py-8">
+            <p className="text-sm text-muted-foreground">No tasks due today</p>
           </div>
         ) : (
-          <div className="space-y-3 md:space-y-4">
-            {tasks.map((task) => (
-              <div
-                key={task._id}
-                className="flex items-start gap-3 p-3 md:p-4 rounded-xl border border-border/50 bg-card/50 transition-all hover:border-border"
-              >
-                <Checkbox
-                  id={task._id}
-                  checked={task.completed}
-                  onCheckedChange={() => handleToggleTask(task._id, task.completed)}
-                  className="mt-1"
-                />
-                <div className="flex-1 min-w-0">
-                  <label
-                    htmlFor={task._id}
-                    className={`text-xs md:text-sm font-medium cursor-pointer ${
-                      task.completed ? 'line-through text-muted-foreground' : 'text-foreground'
-                    }`}
-                  >
-                    {task.title}
+          <div className="space-y-3">
+            {tasks.map((task) => {
+              const isCompleting = completingTaskId === task._id;
+
+              return (
+                <div
+                  key={task._id}
+                  className={`flex items-start gap-3 p-3 rounded-lg bg-card/5 hover:bg-card/10 transition-all duration-300 ${
+                    isCompleting ? "opacity-100" : "opacity-100"
+                  }`}
+                >
+                  <label className="flex items-center cursor-pointer mt-0.5">
+                    <input
+                      type="checkbox"
+                      checked={isCompleting || task.completed}
+                      onChange={() =>
+                        handleToggleTask(task._id, task.completed)
+                      }
+                      disabled={isCompleting}
+                      className="sr-only"
+                    />
+                    <span
+                      className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-all duration-300 ${
+                        isCompleting || task.completed
+                          ? "bg-primary border-primary"
+                          : "border-muted-foreground"
+                      }`}
+                    >
+                      {(isCompleting || task.completed) && (
+                        <svg
+                          className="w-3 h-3 text-white"
+                          viewBox="0 0 12 9"
+                          fill="none"
+                        >
+                          <path
+                            d="M1 4.5L4.5 8L11 1"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      )}
+                    </span>
                   </label>
-                  {/* UPDATED: Show conversation source */}
-                  <p className="text-[10px] md:text-xs text-muted-foreground mt-0.5">
-                     From: {formatTaskSource(task.from)}
-                  </p>
-                  <p className="text-[10px] md:text-xs text-muted-foreground mt-0.5">
-                     Due: {task.due_date_text || 'No due date'}
-                  </p>
+
+                  <div className="flex-1 min-w-0">
+                    <h4
+                      className={`text-sm font-normal text-foreground mb-1 transition-all duration-300 ${
+                        isCompleting || task.completed
+                          ? "line-through opacity-75"
+                          : ""
+                      }`}
+                    >
+                      {task.title}
+                    </h4>
+                    {task.from && (
+                      <p className="text-xs text-muted-foreground/60 mb-1">
+                        From: {task.from.replace(/SPEAKER \d+/i, "Speaker")}
+                      </p>
+                    )}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {task.priority !== "normal" &&
+                        task.priority !== "medium" && (
+                          <span
+                            className={`px-2 py-0.5 rounded-md text-xs font-semibold ${
+                              task.priority === "high"
+                                ? "bg-red-500/10 text-red-600"
+                                : "bg-green-500/10 text-green-600"
+                            }`}
+                          >
+                            {task.priority}
+                          </span>
+                        )}
+                      <p className="text-xs text-muted-foreground/60">
+                        {formatDate(task.dueDate)}
+                      </p>
+                    </div>
+                  </div>
                 </div>
-                {task.priority === 'high' && (
-                  <span className="px-2 py-1 text-[10px] font-medium bg-destructive/10 text-destructive rounded-md">
-                    High
-                  </span>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

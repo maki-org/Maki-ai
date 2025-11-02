@@ -2,13 +2,21 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Routes, Route, Navigate } from "react-router-dom";  // REMOVE BrowserRouter
+import { Routes, Route, Navigate } from "react-router-dom";
 import { SignedIn, SignedOut } from "@clerk/clerk-react";
 import Index from "./pages/Index";
-import SignInPage from "./pages/SignIn";
-import SignUpPage from "./pages/SignUp";
+import Activities from "./pages/Activities";
+import History from "./pages/History";
+import AuthPage from "./pages/Auth";
 import NotFound from "./pages/NotFound";
 import AnimatedBackground from "./components/AnimatedBackground";
+import { DataRefreshProvider } from "./contexts/DataRefreshContext";
+import { HistoryNotificationProvider } from "./contexts/HistoryNotificationContext";
+import HistoryNotificationChecker from "./components/HistoryNotificationChecker";
+import PersonalIntelligence from "./pages/PersonalIntelligence";
+import PersonDetail from "./pages/PersonDetail";
+import HistoryViewDetails from "./pages/HistoryViewDetails";
+import TranscriptView from "./pages/TranscriptView";
 
 const queryClient = new QueryClient();
 
@@ -17,33 +25,93 @@ const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
     <>
       <SignedIn>{children}</SignedIn>
       <SignedOut>
-        <Navigate to="/sign-in" replace />
+        <Navigate to="/auth" replace />
       </SignedOut>
     </>
   );
 };
 
-const App = () => (  
+const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
-      <AnimatedBackground />
-      <Toaster />
-      <Sonner />
-      <Routes>
-        <Route path="/sign-in" element={<SignInPage />} />
-        <Route path="/sign-up" element={<SignUpPage />} />
-        
-        <Route 
-          path="/" 
-          element={
-            <ProtectedRoute>
-              <Index />
-            </ProtectedRoute>
-          } 
-        />
-        
-        <Route path="*" element={<NotFound />} />
-      </Routes>
+      <DataRefreshProvider>
+        <HistoryNotificationProvider>
+          <HistoryNotificationChecker />
+          <AnimatedBackground />
+        <Toaster />
+        <Sonner />
+        <Routes>
+          <Route path="/auth" element={<AuthPage />} />
+          <Route path="/sign-in" element={<Navigate to="/auth" replace />} />
+          <Route path="/sign-up" element={<Navigate to="/auth" replace />} />
+
+          <Route
+            path="/"
+            element={
+              <ProtectedRoute>
+                <Index />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/activities"
+            element={
+              <ProtectedRoute>
+                <Activities />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/personal-intelligence"
+            element={
+              <ProtectedRoute>
+                <PersonalIntelligence />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/person/:personId"
+            element={
+              <ProtectedRoute>
+                <PersonDetail />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/history"
+            element={
+              <ProtectedRoute>
+                <History />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/history/:id"
+            element={
+              <ProtectedRoute>
+                <HistoryViewDetails />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/history/:id/transcript"
+            element={
+              <ProtectedRoute>
+                <TranscriptView />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route path="*" element={<NotFound />} />
+        </Routes>
+        </HistoryNotificationProvider>
+      </DataRefreshProvider>
     </TooltipProvider>
   </QueryClientProvider>
 );
